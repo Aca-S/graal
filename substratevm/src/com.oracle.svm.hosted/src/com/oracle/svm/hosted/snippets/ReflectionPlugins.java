@@ -24,6 +24,11 @@
  */
 package com.oracle.svm.hosted.snippets;
 
+import java.io.BufferedOutputStream;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.PrintStream;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
@@ -36,6 +41,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.ByteOrder;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -48,6 +54,12 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
+import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.util.UserError;
+import jdk.graal.compiler.util.json.JsonBuilder;
+import jdk.graal.compiler.util.json.JsonPrettyWriter;
+import jdk.graal.compiler.util.json.JsonWriter;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.impl.RuntimeClassInitializationSupport;
@@ -103,10 +115,6 @@ import jdk.vm.ci.meta.ResolvedJavaType;
  * JDK so that any code that would rely on object identity is error-prone on any JVM.
  */
 public final class ReflectionPlugins {
-    static class Options {
-        @Option(help = "Enable trace logging for reflection plugins.")//
-        static final HostedOptionKey<Boolean> ReflectionPluginTracing = new HostedOptionKey<>(false);
-    }
 
     /**
      * Marker value for parameters that are null, to distinguish from "not able to {@link #unbox}".
@@ -765,20 +773,195 @@ public final class ReflectionPlugins {
     }
 
     private static void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Object value) {
-        if (Options.ReflectionPluginTracing.getValue()) {
-            System.out.println("Call to " + targetMethod.format("%H.%n(%p)") +
-                            " reached in " + b.getMethod().format("%H.%n(%p)") +
-                            " with parameters (" + targetParameters.get() + ")" +
-                            " was reduced to the constant " + value);
+        if (ReflectionPluginsTracingFeature.isEnabled()) {
+            ReflectionPluginsTracingFeature.traceConstant(b.getMethod(), targetMethod, targetParameters, value);
         }
     }
 
     private static void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass) {
+        if (ReflectionPluginsTracingFeature.isEnabled()) {
+            ReflectionPluginsTracingFeature.traceException(b.getMethod(), targetMethod, targetParameters, exceptionClass);
+        }
+    }
+}
+
+@AutomaticallyRegisteredFeature
+final class ReflectionPluginsTracingFeature implements InternalFeature {
+
+    static class Options {
+        @Option(help = "Enable trace logging to the standard output for reflection plugins.")
+        static final HostedOptionKey<Boolean> ReflectionPluginTracing = new HostedOptionKey<>(false);
+
+        @Option(help = "Specify the trace logging location for reflection plugins.")
+        static final HostedOptionKey<String> ReflectionPluginTraceLocation = new HostedOptionKey<>(null);
+
+        @Option(help = "Specify the trace logging format for reflection plugins.")
+        static final HostedOptionKey<String> ReflectionPluginTraceFormat = new HostedOptionKey<>("plain", key -> {
+            if (!key.getValue().equals("plain") && !key.getValue().equals("json")) {
+                throw UserError.invalidOptionValue(key, key.getValue(), "Value must be either \"plain\" or \"json\".");
+            }
+        });
+    }
+
+    private static final List<TraceEntry> log = new ArrayList<>();
+    private static ReflectionPluginLogSupport logger = null;
+
+    @Override
+    public void afterRegistration(AfterRegistrationAccess access) {
+        String dumpLocation = Options.ReflectionPluginTraceLocation.getValue();
+        if (dumpLocation == null) {
+            return;
+        }
+
+        String logFormat = Options.ReflectionPluginTraceFormat.getValue();
+        logger = logFormat.equals("plain")
+                ? new ReflectionPluginPlainLogSupport(dumpLocation)
+                : new ReflectionPluginJsonLogSupport(dumpLocation);
+    }
+
+    @Override
+    public void afterAnalysis(AfterAnalysisAccess access) {
+        if (logger != null) {
+            logger.dump();
+        }
+    }
+
+    public static boolean isEnabled() {
+        return Options.ReflectionPluginTracing.getValue() || logger != null;
+    }
+
+    public static void traceConstant(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Object value) {
+        trace(new ConstantTraceEntry(contextMethod, targetMethod, targetParameters, value));
+    }
+
+    public static void traceException(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass) {
+        trace(new ExceptionTraceEntry(contextMethod, targetMethod, targetParameters, exceptionClass));
+    }
+
+    private static void trace(TraceEntry entry) {
         if (Options.ReflectionPluginTracing.getValue()) {
-            System.out.println("Call to " + targetMethod.format("%H.%n(%p)") +
-                            " reached in " + b.getMethod().format("%H.%n(%p)") +
-                            " with parameters (" + targetParameters.get() + ")" +
-                            " was reduced to a \"throw new " + exceptionClass.getName() + "(...)\"");
+            System.out.println(entry);
+        }
+        if (logger != null) {
+            log.add(entry);
+        }
+    }
+
+    private abstract static class TraceEntry {
+
+        protected ResolvedJavaMethod contextMethod;
+        protected ResolvedJavaMethod targetMethod;
+        protected Supplier<String> targetParameters;
+
+        TraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters) {
+            this.contextMethod = contextMethod;
+            this.targetMethod = targetMethod;
+            this.targetParameters = targetParameters;
+        }
+
+        public abstract String toString();
+
+        public abstract void toJson(JsonBuilder.ObjectBuilder builder) throws IOException;
+    }
+
+    private static class ConstantTraceEntry extends TraceEntry {
+
+        protected Object value;
+
+        ConstantTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Object value) {
+            super(contextMethod, targetMethod, targetParameters);
+            this.value = value;
+        }
+
+        @Override
+        public String toString() {
+            return "Call to " + targetMethod.format("%H.%n(%p)") +
+                    " reached in " + contextMethod.format("%H.%n(%p)") +
+                    " with parameters (" + targetParameters.get() + ")" +
+                    " was reduced to the constant " + value;
+        }
+
+        @Override
+        public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
+            builder.append("contextMethod", contextMethod.format("%H.%n(%p)"))
+                    .append("targetMethod", targetMethod.format("%H.%n(%p)"))
+                    .append("targetParameters", targetParameters.get())
+                    .append("constantValue", value);
+        }
+    }
+
+    private static class ExceptionTraceEntry extends TraceEntry {
+
+        protected Class<? extends Throwable> exceptionClass;
+
+        ExceptionTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass) {
+            super(contextMethod, targetMethod, targetParameters);
+            this.exceptionClass = exceptionClass;
+        }
+
+        @Override
+        public String toString() {
+            return "Call to " + targetMethod.format("%H.%n(%p)") +
+                    " reached in " + contextMethod.format("%H.%n(%p)") +
+                    " with parameters (" + targetParameters.get() + ")" +
+                    " was reduced to a \"throw new " + exceptionClass.getName() + "(...)\"";
+        }
+
+        @Override
+        public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
+            builder.append("contextMethod", contextMethod.format("%H.%n(%p)"))
+                    .append("targetMethod", targetMethod.format("%H.%n(%p)"))
+                    .append("targetParameters", targetParameters.get())
+                    .append("exception", exceptionClass.getName());
+        }
+    }
+
+    private abstract static class ReflectionPluginLogSupport {
+
+        protected final String location;
+
+        ReflectionPluginLogSupport(String location) {
+            this.location = location;
+        }
+
+        public abstract void dump();
+    }
+
+    private static final class ReflectionPluginPlainLogSupport extends ReflectionPluginLogSupport {
+
+        ReflectionPluginPlainLogSupport(String location) {
+            super(location);
+        }
+
+        @Override
+        public void dump() {
+            try (PrintStream out = new PrintStream(new BufferedOutputStream(new FileOutputStream(location)))) {
+                log.forEach(out::println);
+            } catch (FileNotFoundException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
+
+    private static final class ReflectionPluginJsonLogSupport extends ReflectionPluginLogSupport {
+
+        ReflectionPluginJsonLogSupport(String location) {
+            super(location);
+        }
+
+        @Override
+        public void dump() {
+            try (JsonWriter out = new JsonPrettyWriter(Path.of(location))) {
+                try (JsonBuilder.ArrayBuilder arrayBuilder = out.arrayBuilder()) {
+                    for (TraceEntry entry : log) {
+                        try (JsonBuilder.ObjectBuilder objectBuilder = arrayBuilder.nextEntry().object()) {
+                            entry.toJson(objectBuilder);
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
         }
     }
 }
