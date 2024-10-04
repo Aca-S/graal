@@ -388,7 +388,13 @@ public final class ReflectionPlugins {
         }
         String className = (String) classNameValue;
         boolean initialize = (Boolean) initializeValue;
-        Object[] argValues = new Object[] {className, initialize};
+        /*
+         * Check which variant of Class.forName was called in order to avoid logging
+         * the initialize argument value for the single parameter version of the call.
+         */
+        Object[] argValues = targetMethod.getParameters().length == 1
+                ? new Object[] {className}
+                : new Object[] {className, initialize};
 
         TypeResult<Class<?>> typeResult = imageClassLoader.findClass(className, false);
         if (!typeResult.isPresent()) {
