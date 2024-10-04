@@ -50,7 +50,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
-import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -356,8 +355,6 @@ public final class ReflectionPlugins {
      * the constructor parameter.
      */
     private boolean processMethodHandlesLookup(GraphBuilderContext b, ResolvedJavaMethod targetMethod) {
-        Supplier<String> targetParameters = () -> "";
-
         if (StackTraceUtils.ignoredBySecurityStackWalk(b.getMetaAccess(), b.getMethod())) {
             /*
              * If our immediate caller (which is the only method available at the time the
@@ -372,9 +369,9 @@ public final class ReflectionPlugins {
             /* The constructor of Lookup is not public, so we need to invoke it via reflection. */
             lookup = LOOKUP_CONSTRUCTOR.newInstance(callerClass);
         } catch (Throwable ex) {
-            return throwException(b, targetMethod, targetParameters, ex.getClass(), ex.getMessage());
+            return throwException(b, targetMethod, null, new Object[] {}, ex.getClass(), ex.getMessage());
         }
-        return pushConstant(b, targetMethod, targetParameters, JavaKind.Object, lookup, false) != null;
+        return pushConstant(b, targetMethod, null, new Object[] {}, JavaKind.Object, lookup, false) != null;
     }
 
     /**
@@ -391,19 +388,19 @@ public final class ReflectionPlugins {
         }
         String className = (String) classNameValue;
         boolean initialize = (Boolean) initializeValue;
-        Supplier<String> targetParameters = () -> className + ", " + initialize;
+        Object[] argValues = new Object[] {className, initialize};
 
         TypeResult<Class<?>> typeResult = imageClassLoader.findClass(className, false);
         if (!typeResult.isPresent()) {
             Throwable e = typeResult.getException();
-            return throwException(b, targetMethod, targetParameters, e.getClass(), e.getMessage());
+            return throwException(b, targetMethod, null, argValues, e.getClass(), e.getMessage());
         }
         Class<?> clazz = typeResult.get();
         if (PredefinedClassesSupport.isPredefined(clazz)) {
             return false;
         }
 
-        JavaConstant classConstant = pushConstant(b, targetMethod, targetParameters, JavaKind.Object, clazz, false);
+        JavaConstant classConstant = pushConstant(b, targetMethod, null, argValues, JavaKind.Object, clazz, false);
         if (classConstant == null) {
             return false;
         }
@@ -441,7 +438,7 @@ public final class ReflectionPlugins {
 
         if (result != null) {
             b.addPush(JavaKind.Object, ConstantNode.forConstant(result, b.getMetaAccess()));
-            traceConstant(b, targetMethod, clazz::getName, result);
+            traceConstant(b, targetMethod, clazz, new Object[] {}, result);
             return true;
         }
 
@@ -528,17 +525,13 @@ public final class ReflectionPlugins {
             return false;
         }
 
-        /* String representation of the parameters for debug printing. */
-        Supplier<String> targetParameters = () -> (receiverValue == null ? "" : receiverValue + "; ") +
-                        Stream.of(argValues).map(arg -> arg instanceof Object[] ? Arrays.toString((Object[]) arg) : Objects.toString(arg)).collect(Collectors.joining(", "));
-
         Object returnValue;
         try {
             returnValue = reflectionMethod.invoke(receiverValue, argValues);
         } catch (InvocationTargetException ex) {
-            return throwException(b, targetMethod, targetParameters, ex.getTargetException().getClass(), ex.getTargetException().getMessage());
+            return throwException(b, targetMethod, receiverValue, argValues, ex.getTargetException().getClass(), ex.getTargetException().getMessage());
         } catch (Throwable ex) {
-            return throwException(b, targetMethod, targetParameters, ex.getClass(), ex.getMessage());
+            return throwException(b, targetMethod, receiverValue, argValues, ex.getClass(), ex.getMessage());
         }
 
         JavaKind returnKind = targetMethod.getSignature().getReturnKind();
@@ -546,11 +539,11 @@ public final class ReflectionPlugins {
             /*
              * The target method is a side-effect free void method that did not throw an exception.
              */
-            traceConstant(b, targetMethod, targetParameters, JavaKind.Void);
+            traceConstant(b, targetMethod, receiverValue, argValues, JavaKind.Void);
             return true;
         }
 
-        return pushConstant(b, targetMethod, targetParameters, returnKind, returnValue, false) != null;
+        return pushConstant(b, targetMethod, receiverValue, argValues, returnKind, returnValue, false) != null;
     }
 
     private <T> void registerBulkInvocationPlugin(InvocationPlugins plugins, Class<T> declaringClass, String methodName, Consumer<T> registrationCallback) {
@@ -733,7 +726,7 @@ public final class ReflectionPlugins {
         return annotated != null && annotated.isAnnotationPresent(Delete.class);
     }
 
-    private JavaConstant pushConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, JavaKind returnKind, Object returnValue,
+    private JavaConstant pushConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, JavaKind returnKind, Object returnValue,
                     boolean allowNullReturnValue) {
         Object intrinsicValue = getIntrinsic(b, returnValue == null && allowNullReturnValue ? NULL_MARKER : returnValue);
         if (intrinsicValue == null) {
@@ -750,11 +743,11 @@ public final class ReflectionPlugins {
         }
 
         b.addPush(returnKind, ConstantNode.forConstant(intrinsicConstant, b.getMetaAccess()));
-        traceConstant(b, targetMethod, targetParameters, intrinsicValue);
+        traceConstant(b, targetMethod, targetCaller, targetArguments, intrinsicValue);
         return intrinsicConstant;
     }
 
-    private boolean throwException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass, String originalMessage) {
+    private boolean throwException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass, String originalMessage) {
         /* Get the exception throwing method that has a message parameter. */
         Method exceptionMethod = ExceptionSynthesizer.throwExceptionMethodOrNull(exceptionClass, String.class);
         if (exceptionMethod == null) {
@@ -768,19 +761,19 @@ public final class ReflectionPlugins {
         String message = originalMessage + ". This exception was synthesized during native image building from a call to " + targetMethod.format("%H.%n(%p)") +
                         " with constant arguments.";
         ExceptionSynthesizer.throwException(b, exceptionMethod, message);
-        traceException(b, targetMethod, targetParameters, exceptionClass);
+        traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
         return true;
     }
 
-    private static void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Object value) {
+    private static void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
-            ReflectionPluginsTracingFeature.traceConstant(b.getMethod(), targetMethod, targetParameters, value);
+            ReflectionPluginsTracingFeature.traceConstant(b.getMethod(), targetMethod, targetCaller, targetArguments, value);
         }
     }
 
-    private static void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass) {
+    private static void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
-            ReflectionPluginsTracingFeature.traceException(b.getMethod(), targetMethod, targetParameters, exceptionClass);
+            ReflectionPluginsTracingFeature.traceException(b.getMethod(), targetMethod, targetCaller, targetArguments, exceptionClass);
         }
     }
 }
@@ -830,12 +823,12 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
         return Options.ReflectionPluginTracing.getValue() || logger != null;
     }
 
-    public static void traceConstant(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Object value) {
-        trace(new ConstantTraceEntry(contextMethod, targetMethod, targetParameters, value));
+    public static void traceConstant(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
+        trace(new ConstantTraceEntry(contextMethod, targetMethod, targetCaller, targetArguments, value));
     }
 
-    public static void traceException(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass) {
-        trace(new ExceptionTraceEntry(contextMethod, targetMethod, targetParameters, exceptionClass));
+    public static void traceException(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
+        trace(new ExceptionTraceEntry(contextMethod, targetMethod, targetCaller, targetArguments, exceptionClass));
     }
 
     private static void trace(TraceEntry entry) {
@@ -851,42 +844,58 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
         protected ResolvedJavaMethod contextMethod;
         protected ResolvedJavaMethod targetMethod;
-        protected Supplier<String> targetParameters;
+        protected Object targetCaller;
+        protected Object[] targetArguments;
 
-        TraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters) {
+        TraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments) {
             this.contextMethod = contextMethod;
             this.targetMethod = targetMethod;
-            this.targetParameters = targetParameters;
+            this.targetCaller = targetCaller;
+            this.targetArguments = targetArguments;
         }
 
-        public abstract String toString();
+        public String toString() {
+            String targetArgumentsString = Stream.of(targetArguments)
+                    .map(arg -> arg instanceof Object[] ? Arrays.toString((Object[]) arg) : Objects.toString(arg)).collect(Collectors.joining(", "));
 
-        public abstract void toJson(JsonBuilder.ObjectBuilder builder) throws IOException;
+            return "Call to " + targetMethod.format("%H.%n(%p)") +
+                    " reached in " + contextMethod.format("%H.%n(%p)") +
+                    (targetCaller != null ? " with caller " + targetCaller + " and" : "") +
+                    " with arguments (" + targetArgumentsString + ") was reduced";
+        }
+
+        public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
+            builder.append("contextMethod", contextMethod.format("%H.%n(%p)"));
+            builder.append("targetMethod", targetMethod.format("%H.%n(%p)"));
+            if (targetCaller != null) {
+                builder.append("targetCaller", targetCaller);
+            }
+            try (JsonBuilder.ArrayBuilder argsBuilder = builder.append("targetArguments").array()) {
+                for (Object arg : targetArguments) {
+                    argsBuilder.append(arg instanceof Object[] ? Arrays.toString((Object[]) arg) : Objects.toString(arg));
+                }
+            }
+        }
     }
 
     private static class ConstantTraceEntry extends TraceEntry {
 
         protected Object value;
 
-        ConstantTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Object value) {
-            super(contextMethod, targetMethod, targetParameters);
+        ConstantTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
+            super(contextMethod, targetMethod, targetCaller, targetArguments);
             this.value = value;
         }
 
         @Override
         public String toString() {
-            return "Call to " + targetMethod.format("%H.%n(%p)") +
-                    " reached in " + contextMethod.format("%H.%n(%p)") +
-                    " with parameters (" + targetParameters.get() + ")" +
-                    " was reduced to the constant " + value;
+            return super.toString() + " to the constant " + value;
         }
 
         @Override
         public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
-            builder.append("contextMethod", contextMethod.format("%H.%n(%p)"))
-                    .append("targetMethod", targetMethod.format("%H.%n(%p)"))
-                    .append("targetParameters", targetParameters.get())
-                    .append("constantValue", value);
+            super.toJson(builder);
+            builder.append("constantValue", value);
         }
     }
 
@@ -894,25 +903,20 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
         protected Class<? extends Throwable> exceptionClass;
 
-        ExceptionTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Supplier<String> targetParameters, Class<? extends Throwable> exceptionClass) {
-            super(contextMethod, targetMethod, targetParameters);
+        ExceptionTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
+            super(contextMethod, targetMethod, targetCaller, targetArguments);
             this.exceptionClass = exceptionClass;
         }
 
         @Override
         public String toString() {
-            return "Call to " + targetMethod.format("%H.%n(%p)") +
-                    " reached in " + contextMethod.format("%H.%n(%p)") +
-                    " with parameters (" + targetParameters.get() + ")" +
-                    " was reduced to a \"throw new " + exceptionClass.getName() + "(...)\"";
+            return super.toString() + " to a \"throw new " + exceptionClass.getName() + "(...)\"";
         }
 
         @Override
         public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
-            builder.append("contextMethod", contextMethod.format("%H.%n(%p)"))
-                    .append("targetMethod", targetMethod.format("%H.%n(%p)"))
-                    .append("targetParameters", targetParameters.get())
-                    .append("exception", exceptionClass.getName());
+            super.toJson(builder);
+            builder.append("exception", exceptionClass.getName());
         }
     }
 
