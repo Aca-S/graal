@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,26 +22,26 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package com.oracle.graal.pointsto.flow;
+
+import com.oracle.graal.pointsto.PointsToAnalysis;
+import com.oracle.graal.pointsto.meta.AnalysisType;
 
 /**
- * "Parses" (effectively returns unaltered) a {@link String} from command line arguments.
+ * A local use of AllInstantiatedFlow that can have a predicate.
  */
-public class StringValue extends OptionValue<String> {
-    public StringValue(String name, String help) {
-        super(name, help);
+public class LocalAllInstantiatedFlow extends TypeFlow<AnalysisType> {
+
+    public LocalAllInstantiatedFlow(AnalysisType declaredType) {
+        super(declaredType, declaredType);
     }
 
-    public StringValue(String name, String defaultValue, String help) {
-        super(name, defaultValue, help);
+    private LocalAllInstantiatedFlow(MethodFlowsGraph methodFlows, LocalAllInstantiatedFlow original) {
+        super(original, methodFlows);
     }
 
     @Override
-    public boolean parseValue(String arg) throws InvalidArgumentException {
-        if (arg == null) {
-            throw new InvalidArgumentException(getName(), "no value provided");
-        }
-        value = arg;
-        return true;
+    public TypeFlow<AnalysisType> copy(PointsToAnalysis bb, MethodFlowsGraph methodFlows) {
+        return new LocalAllInstantiatedFlow(methodFlows, this);
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, 2023, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,24 +22,36 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package com.oracle.graal.pointsto.flow;
+
+import com.oracle.graal.pointsto.PointsToAnalysis;
+import com.oracle.graal.pointsto.meta.AnalysisType;
+import com.oracle.graal.pointsto.typestate.TypeState;
+
+import jdk.vm.ci.code.BytecodePosition;
 
 /**
- * Thrown when a {@code --help} flag is encountered when parsing command-line arguments.
+ * This flow represents a null check used by {@link ConditionalFlow}.
  */
-@SuppressWarnings("serial")
-public class HelpRequestedException extends Exception {
-    /**
-     * The command that the user requested help for.
-     */
-    private final Command command;
+public class BooleanNullCheckTypeFlow extends BooleanCheckTypeFlow {
 
-    HelpRequestedException(Command command) {
-        super();
-        this.command = command;
+    public BooleanNullCheckTypeFlow(BytecodePosition source, AnalysisType inputType) {
+        super(source, inputType);
     }
 
-    public Command getCommand() {
-        return command;
+    private BooleanNullCheckTypeFlow(MethodFlowsGraph methodFlows, BooleanNullCheckTypeFlow original) {
+        super(original, methodFlows);
+    }
+
+    @Override
+    public TypeFlow<BytecodePosition> copy(PointsToAnalysis bb, MethodFlowsGraph methodFlows) {
+        return new BooleanNullCheckTypeFlow(methodFlows, this);
+    }
+
+    @Override
+    public TypeState filter(PointsToAnalysis bb, TypeState newState) {
+        var hasNull = newState.canBeNull();
+        var hasTypes = newState.typesCount() > 0;
+        return convertToBoolean(hasNull, hasTypes);
     }
 }

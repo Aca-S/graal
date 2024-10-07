@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,26 +22,29 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package com.oracle.graal.pointsto.flow;
+
+import com.oracle.graal.pointsto.PointsToAnalysis;
+import com.oracle.graal.pointsto.meta.AnalysisType;
+
+import jdk.vm.ci.code.BytecodePosition;
 
 /**
- * Wraps an exception thrown during parsing of a command.
+ * Used to prevent value propagation from the end of a branch until the latest predicate in that
+ * branch has a non-empty type state.
  */
-@SuppressWarnings("serial")
-public class CommandParsingException extends Exception {
-    private final Command command;
+public class LocalAnchorFlow extends TypeFlow<BytecodePosition> {
 
-    CommandParsingException(Exception cause, Command command) {
-        super(cause);
-        this.command = command;
+    public LocalAnchorFlow(BytecodePosition source, AnalysisType declaredType) {
+        super(source, declaredType);
+    }
+
+    public LocalAnchorFlow(MethodFlowsGraph methodFlows, LocalAnchorFlow original) {
+        super(original, methodFlows);
     }
 
     @Override
-    public String getMessage() {
-        return "Argument parsing error: " + getCause().getMessage();
-    }
-
-    public Command getCommand() {
-        return command;
+    public TypeFlow<BytecodePosition> copy(PointsToAnalysis bb, MethodFlowsGraph methodFlows) {
+        return new LocalAnchorFlow(methodFlows, this);
     }
 }

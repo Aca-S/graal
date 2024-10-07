@@ -22,18 +22,17 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package jdk.graal.compiler.util.args;
 
 /**
- * Parses a literal boolean ("true" or "false", ignoring case) from command line arguments.
+ * Parses a {@link Double} from command line arguments.
  */
-public class BooleanValue extends OptionValue<Boolean> {
-
-    public BooleanValue(String name, String help) {
+public class DoubleValue extends OptionValue<Double> {
+    public DoubleValue(String name, String help) {
         super(name, help);
     }
 
-    public BooleanValue(String name, boolean defaultValue, String help) {
+    public DoubleValue(String name, Double defaultValue, String help) {
         super(name, defaultValue, help);
     }
 
@@ -42,16 +41,11 @@ public class BooleanValue extends OptionValue<Boolean> {
         if (arg == null) {
             throw new InvalidArgumentException(getName(), "no value provided");
         }
-        switch (arg.toLowerCase()) {
-            case "true":
-                value = true;
-                break;
-            case "false":
-                value = false;
-                break;
-            default:
-                throw new InvalidArgumentException(getName(), String.format("invalid boolean value: \"%s\"", arg));
+        try {
+            value = Double.valueOf(arg);
+            return true;
+        } catch (NumberFormatException e) {
+            throw new InvalidArgumentException(getName(), String.format("invalid double value: \"%s\"", arg));
         }
-        return true;
     }
 }

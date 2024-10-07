@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024, 2024, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -22,30 +22,11 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package com.oracle.graal.pointsto.flow;
 
 /**
- * Parses a {@link Double} from command line arguments.
+ * A marker interface for flows that are global, i.e. do not have a position in a specific method,
+ * and as a consequence they are enabled immediately upon creation.
  */
-public class DoubleValue extends OptionValue<Double> {
-    public DoubleValue(String name, String help) {
-        super(name, help);
-    }
-
-    public DoubleValue(String name, Double defaultValue, String help) {
-        super(name, defaultValue, help);
-    }
-
-    @Override
-    public boolean parseValue(String arg) throws InvalidArgumentException {
-        if (arg == null) {
-            throw new InvalidArgumentException(getName(), "no value provided");
-        }
-        try {
-            value = Double.valueOf(arg);
-            return true;
-        } catch (NumberFormatException e) {
-            throw new InvalidArgumentException(getName(), String.format("invalid double value: \"%s\"", arg));
-        }
-    }
+public interface GlobalFlow {
 }

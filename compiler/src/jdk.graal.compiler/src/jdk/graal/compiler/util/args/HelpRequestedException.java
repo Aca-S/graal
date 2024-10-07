@@ -22,14 +22,24 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package jdk.graal.compiler.util.args;
 
 /**
- * Indicates that a value was not provided for a required program option.
+ * Thrown when a {@code --help} flag is encountered when parsing command-line arguments.
  */
 @SuppressWarnings("serial")
-public class MissingArgumentException extends Exception {
-    MissingArgumentException(String argumentName) {
-        super("The argument '" + argumentName + "' is required.");
+public class HelpRequestedException extends Exception {
+    /**
+     * The command that the user requested help for.
+     */
+    private final Command command;
+
+    HelpRequestedException(Command command) {
+        super();
+        this.command = command;
+    }
+
+    public Command getCommand() {
+        return command;
     }
 }

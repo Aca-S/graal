@@ -22,31 +22,38 @@
  * or visit www.oracle.com if you need additional information or have any
  * questions.
  */
-package org.graalvm.igvutil.args;
+package jdk.graal.compiler.util.args;
+
+import java.util.Locale;
 
 /**
- * A boolean flag option value that is {@code false} when not present in the program arguments and
- * {@code true} when it is present.
+ * Parses a literal boolean ("true" or "false", ignoring case) from command line arguments.
  */
-public class Flag extends OptionValue<Boolean> {
-    public Flag(String help) {
-        super("", false, help);
+public class BooleanValue extends OptionValue<Boolean> {
+
+    public BooleanValue(String name, String help) {
+        super(name, help);
+    }
+
+    public BooleanValue(String name, boolean defaultValue, String help) {
+        super(name, defaultValue, help);
     }
 
     @Override
-    public void clear() {
-        value = false;
-    }
-
-    @Override
-    public boolean parseValue(String arg) {
-        value = true;
-        return false;
-    }
-
-    @Override
-    public String getUsage() {
-        // No value, usage is only determined by flag name
-        return "";
+    public boolean parseValue(String arg) throws InvalidArgumentException {
+        if (arg == null) {
+            throw new InvalidArgumentException(getName(), "no value provided");
+        }
+        switch (arg.toLowerCase(Locale.US)) {
+            case "true":
+                value = true;
+                break;
+            case "false":
+                value = false;
+                break;
+            default:
+                throw new InvalidArgumentException(getName(), String.format("invalid boolean value: \"%s\"", arg));
+        }
+        return true;
     }
 }
