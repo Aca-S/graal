@@ -773,12 +773,14 @@ public final class ReflectionPlugins {
 
     private static void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
+            System.out.println("Depth: " + b.getDepth());
             ReflectionPluginsTracingFeature.traceConstant(b.getMethod(), targetMethod, targetCaller, targetArguments, value);
         }
     }
 
     private static void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
+            System.out.println("Depth: " + b.getDepth());
             ReflectionPluginsTracingFeature.traceException(b.getMethod(), targetMethod, targetCaller, targetArguments, exceptionClass);
         }
     }
@@ -795,9 +797,9 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
         static final HostedOptionKey<String> ReflectionPluginTraceLocation = new HostedOptionKey<>(null);
 
         @Option(help = "Specify the trace logging format for reflection plugins.")
-        static final HostedOptionKey<String> ReflectionPluginTraceFormat = new HostedOptionKey<>("plain", key -> {
-            if (!key.getValue().equals("plain") && !key.getValue().equals("json")) {
-                throw UserError.invalidOptionValue(key, key.getValue(), "Value must be either \"plain\" or \"json\".");
+        static final HostedOptionKey<String> ReflectionPluginTraceFormat = new HostedOptionKey<>("json", key -> {
+            if (!key.getValue().equals("json") && !key.getValue().equals("plain")) {
+                throw UserError.invalidOptionValue(key, key.getValue(), "Value must be either \"json\" or \"plain\".");
             }
         });
     }
@@ -813,9 +815,9 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
         }
 
         String logFormat = Options.ReflectionPluginTraceFormat.getValue();
-        logger = logFormat.equals("plain")
-                ? new ReflectionPluginPlainLogSupport(dumpLocation)
-                : new ReflectionPluginJsonLogSupport(dumpLocation);
+        logger = logFormat.equals("json")
+                ? new ReflectionPluginJsonLogSupport(dumpLocation)
+                : new ReflectionPluginPlainLogSupport(dumpLocation);
     }
 
     @Override
