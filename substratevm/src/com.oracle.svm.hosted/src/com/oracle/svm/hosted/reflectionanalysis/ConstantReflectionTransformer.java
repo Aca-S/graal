@@ -8,6 +8,7 @@ import jdk.internal.org.objectweb.asm.Opcodes;
 import jdk.internal.org.objectweb.asm.Type;
 import jdk.internal.org.objectweb.asm.tree.AbstractInsnNode;
 import jdk.internal.org.objectweb.asm.tree.ClassNode;
+import jdk.internal.org.objectweb.asm.tree.InsnList;
 import jdk.internal.org.objectweb.asm.tree.InsnNode;
 import jdk.internal.org.objectweb.asm.tree.LdcInsnNode;
 import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
@@ -123,9 +124,9 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
 
         MethodNode partiallyEvaluatedMethod = generatePEMethodNode(cc.methodCall, "(Ljava/lang/ClassLoader;)Ljava/lang/Class;");
 
-        partiallyEvaluatedMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
-        partiallyEvaluatedMethod.instructions.add(new InsnNode(initialize.get() ? Opcodes.ICONST_1 : Opcodes.ICONST_0));
         partiallyEvaluatedMethod.instructions.add(new LdcInsnNode(className.get()));
+        partiallyEvaluatedMethod.instructions.add(new InsnNode(initialize.get() ? Opcodes.ICONST_1 : Opcodes.ICONST_0));
+        partiallyEvaluatedMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
         partiallyEvaluatedMethod.instructions.add(new MethodInsnNode(cc.methodCall.getOpcode(), cc.methodCall.owner, cc.methodCall.name, cc.methodCall.desc));
         partiallyEvaluatedMethod.instructions.add(new InsnNode(Opcodes.ARETURN));
         partiallyEvaluatedMethod.maxStack = 3;
@@ -146,9 +147,15 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
 
         int originalParameterCount = Type.getArgumentTypes(methodCall.desc).length + (methodCall.getOpcode() != Opcodes.INVOKESTATIC ? 1 : 0);
         int newParameterCount = Type.getArgumentTypes(target.desc).length;
+        int argsToRemove = originalParameterCount - newParameterCount;
 
-        for (int i = 0; i < originalParameterCount - newParameterCount; i++) {
+        if (argsToRemove == originalParameterCount) {
             target.instructions.insertBefore(methodCall, new InsnNode(Opcodes.POP));
+        } else {
+            for (int i = 0; i < argsToRemove; i++) {
+                target.instructions.insertBefore(methodCall, new InsnNode(Opcodes.SWAP));
+                target.instructions.insertBefore(methodCall, new InsnNode(Opcodes.POP));
+            }
         }
 
         methodCall.owner = contextClassNode.name;
