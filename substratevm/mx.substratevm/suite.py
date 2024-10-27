@@ -628,6 +628,8 @@ suite = {
                     "jdk.internal.misc",
                     "jdk.internal.vm.annotation",
                     "jdk.internal.org.objectweb.asm",
+                    "jdk.internal.org.objectweb.asm.tree",
+                    "jdk.internal.org.objectweb.asm.tree.analysis",
                     "sun.net.www",
                     "sun.reflect.annotation",
                     "sun.security.jca",

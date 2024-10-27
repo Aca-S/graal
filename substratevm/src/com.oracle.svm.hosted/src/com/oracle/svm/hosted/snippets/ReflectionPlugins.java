@@ -383,7 +383,7 @@ public final class ReflectionPlugins {
         Object classNameValue = unbox(b, nameNode, JavaKind.Object);
         Object initializeValue = unbox(b, initializeNode, JavaKind.Boolean);
 
-        if (!(classNameValue instanceof String) || !(initializeValue instanceof Boolean)) {
+        if (!(classNameValue instanceof String) || !(initializeValue instanceof Boolean) || !b.getMethod().getName().startsWith("$forName")) {
             return false;
         }
         String className = (String) classNameValue;
@@ -773,15 +773,13 @@ public final class ReflectionPlugins {
 
     private static void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
-            System.out.println("Depth: " + b.getDepth());
-            ReflectionPluginsTracingFeature.traceConstant(b.getMethod(), targetMethod, targetCaller, targetArguments, value);
+            ReflectionPluginsTracingFeature.traceConstant(b, targetMethod, targetCaller, targetArguments, value);
         }
     }
 
     private static void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
-            System.out.println("Depth: " + b.getDepth());
-            ReflectionPluginsTracingFeature.traceException(b.getMethod(), targetMethod, targetCaller, targetArguments, exceptionClass);
+            ReflectionPluginsTracingFeature.traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
         }
     }
 }
@@ -831,12 +829,12 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
         return Options.ReflectionPluginTracing.getValue() || logger != null;
     }
 
-    public static void traceConstant(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
-        trace(new ConstantTraceEntry(contextMethod, targetMethod, targetCaller, targetArguments, value));
+    public static void traceConstant(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
+        trace(new ConstantTraceEntry(context, targetMethod, targetCaller, targetArguments, value));
     }
 
-    public static void traceException(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
-        trace(new ExceptionTraceEntry(contextMethod, targetMethod, targetCaller, targetArguments, exceptionClass));
+    public static void traceException(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
+        trace(new ExceptionTraceEntry(context, targetMethod, targetCaller, targetArguments, exceptionClass));
     }
 
     private static void trace(TraceEntry entry) {
@@ -851,12 +849,14 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
     private abstract static class TraceEntry {
 
         protected ResolvedJavaMethod contextMethod;
+        protected int inliningDepth;
         protected ResolvedJavaMethod targetMethod;
         protected Object targetCaller;
         protected Object[] targetArguments;
 
-        TraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments) {
-            this.contextMethod = contextMethod;
+        TraceEntry(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments) {
+            this.contextMethod = context.getMethod();
+            this.inliningDepth = context.getDepth();
             this.targetMethod = targetMethod;
             this.targetCaller = targetCaller;
             this.targetArguments = targetArguments;
@@ -874,6 +874,7 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
         public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
             builder.append("contextMethod", contextMethod.format("%H.%n(%p)"));
+            builder.append("inliningDepth", inliningDepth);
             builder.append("targetMethod", targetMethod.format("%H.%n(%p)"));
             if (targetCaller != null) {
                 builder.append("targetCaller", targetCaller);
@@ -890,8 +891,8 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
         protected Object value;
 
-        ConstantTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
-            super(contextMethod, targetMethod, targetCaller, targetArguments);
+        ConstantTraceEntry(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
+            super(context, targetMethod, targetCaller, targetArguments);
             this.value = value;
         }
 
@@ -911,8 +912,8 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
         protected Class<? extends Throwable> exceptionClass;
 
-        ExceptionTraceEntry(ResolvedJavaMethod contextMethod, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
-            super(contextMethod, targetMethod, targetCaller, targetArguments);
+        ExceptionTraceEntry(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
+            super(context, targetMethod, targetCaller, targetArguments);
             this.exceptionClass = exceptionClass;
         }
 
