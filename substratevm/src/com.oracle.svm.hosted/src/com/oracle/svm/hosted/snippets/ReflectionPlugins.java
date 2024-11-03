@@ -388,10 +388,11 @@ public final class ReflectionPlugins {
             return false;
         }
 
-        if (!ConstantReflectionTransformer.callRegistry.contains(b.getMethod(), b.bci())) {
+        if (ConstantReflectionTransformer.callRegistry.get(b.getMethod(), b.bci()) == null) {
             return false;
         }
 
+        // TODO: Replace with arguments gathered in the ConstantReflectionTransformer call registry
         String className = (String) classNameValue;
         boolean initialize = (Boolean) initializeValue;
         /*
