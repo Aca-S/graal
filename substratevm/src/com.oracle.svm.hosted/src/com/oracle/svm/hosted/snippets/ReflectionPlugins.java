@@ -56,6 +56,7 @@ import java.util.stream.Stream;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.hosted.reflectionanalysis.ConstantReflectionTransformer;
 import jdk.graal.compiler.util.json.JsonBuilder;
 import jdk.graal.compiler.util.json.JsonPrettyWriter;
 import jdk.graal.compiler.util.json.JsonWriter;
@@ -383,9 +384,14 @@ public final class ReflectionPlugins {
         Object classNameValue = unbox(b, nameNode, JavaKind.Object);
         Object initializeValue = unbox(b, initializeNode, JavaKind.Boolean);
 
-        if (!(classNameValue instanceof String) || !(initializeValue instanceof Boolean) || !b.getMethod().getName().startsWith("$forName")) {
+        if (!(classNameValue instanceof String) || !(initializeValue instanceof Boolean)) {
             return false;
         }
+
+        if (!ConstantReflectionTransformer.callRegistry.contains(b.getMethod(), b.bci())) {
+            return false;
+        }
+
         String className = (String) classNameValue;
         boolean initialize = (Boolean) initializeValue;
         /*

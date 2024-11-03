@@ -4,16 +4,11 @@ import com.oracle.svm.hosted.reflectionanalysis.analyzers.ConstantBooleanAnalyze
 import com.oracle.svm.hosted.reflectionanalysis.analyzers.ConstantStringAnalyzer;
 import jdk.internal.org.objectweb.asm.ClassReader;
 import jdk.internal.org.objectweb.asm.ClassWriter;
-import jdk.internal.org.objectweb.asm.Opcodes;
-import jdk.internal.org.objectweb.asm.Type;
 import jdk.internal.org.objectweb.asm.tree.AbstractInsnNode;
 import jdk.internal.org.objectweb.asm.tree.ClassNode;
-import jdk.internal.org.objectweb.asm.tree.InsnList;
-import jdk.internal.org.objectweb.asm.tree.InsnNode;
-import jdk.internal.org.objectweb.asm.tree.LdcInsnNode;
+import jdk.internal.org.objectweb.asm.tree.LabelNode;
 import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
 import jdk.internal.org.objectweb.asm.tree.MethodNode;
-import jdk.internal.org.objectweb.asm.tree.VarInsnNode;
 import jdk.internal.org.objectweb.asm.tree.analysis.Analyzer;
 import jdk.internal.org.objectweb.asm.tree.analysis.AnalyzerException;
 import jdk.internal.org.objectweb.asm.tree.analysis.Frame;
@@ -27,18 +22,18 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Consumer;
+import java.util.function.Predicate;
 
 public class ConstantReflectionTransformer implements ClassFileTransformer {
 
-    private static final Map<String, Consumer<CallContext>> reflectiveCallHandlers = new HashMap<>() {
+    public static ConstantReflectionRegistry callRegistry = new ConstantReflectionRegistry();
+
+    private static final Map<String, Predicate<Frame<SourceValue>>> reflectiveCallHandlers = new HashMap<>() {
         {
-            put(encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;"), ConstantReflectionTransformer::partiallyEvaluateClassForNameOne);
-            put(encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;"), ConstantReflectionTransformer::partiallyEvaluateClassForNameTwo);
+            put(encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;"), ConstantReflectionTransformer::canInferClassForNameOne);
+            put(encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;"), ConstantReflectionTransformer::canInferClassForNameTwo);
         }
     };
-
-    private static final Map<String, Integer> partialEvaluationCounts = new HashMap<>();
 
     private static ConstantStringAnalyzer stringAnalyzer;
     private static ConstantBooleanAnalyzer booleanAnalyzer;
@@ -50,20 +45,33 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         ClassReader reader = new ClassReader(classFileBuffer);
         reader.accept(classNode, 0);
 
-        transformClass(classNode);
+        Map<MethodNode, List<LabelNode>> inferredCallLabels = analyzeClass(classNode);
 
+        // Force label BCI resolution
         ClassWriter writer = new ClassWriter(0);
         classNode.accept(writer);
+
+        for (Map.Entry<MethodNode, List<LabelNode>> entry : inferredCallLabels.entrySet()) {
+            for (LabelNode labelNode : entry.getValue()) {
+                callRegistry.add(classNode, entry.getKey(), labelNode.getLabel().getOffset());
+            }
+        }
 
         return writer.toByteArray();
     }
 
-    private static void transformClass(ClassNode classNode) {
-        List<MethodNode> methods = new ArrayList<>(classNode.methods);
-        methods.forEach(methodNode -> transformMethod(methodNode, classNode));
+    private static Map<MethodNode, List<LabelNode>> analyzeClass(ClassNode classNode) {
+        Map<MethodNode, List<LabelNode>> inferredCallLabels = new HashMap<>();
+        for (MethodNode method : classNode.methods) {
+            List<LabelNode> inferredCallLabelsInMethod = analyzeMethod(method, classNode);
+            if (!inferredCallLabelsInMethod.isEmpty()) {
+                inferredCallLabels.put(method, inferredCallLabelsInMethod);
+            }
+        }
+        return inferredCallLabels;
     }
 
-    private static void transformMethod(MethodNode methodNode, ClassNode contextClassNode) {
+    private static List<LabelNode> analyzeMethod(MethodNode methodNode, ClassNode contextClassNode) {
         Analyzer<SourceValue> analyzer = new Analyzer<>(new SourceInterpreter());
         try {
             analyzer.analyze(contextClassNode.name, methodNode);
@@ -77,19 +85,31 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         stringAnalyzer = new ConstantStringAnalyzer(instructions, frames);
         booleanAnalyzer = new ConstantBooleanAnalyzer(instructions, frames);
 
+        List<LabelNode> inferredCallLabels = new ArrayList<>();
+
         for (int i = 0; i < instructions.length; i++) {
             if (instructions[i] instanceof MethodInsnNode methodCall) {
-                Consumer<CallContext> handler = reflectiveCallHandlers.get(encodeMethodCall(methodCall));
-                if (handler != null) {
-                    CallContext cc = new CallContext(methodCall, frames[i], methodNode, contextClassNode);
-                    handler.accept(cc);
+                Predicate<Frame<SourceValue>> handler = reflectiveCallHandlers.get(encodeMethodCall(methodCall));
+                if (handler != null && handler.test(frames[i])) {
+                    LabelNode label = new LabelNode();
+                    methodNode.instructions.insertBefore(instructions[i], label);
+                    inferredCallLabels.add(label);
                 }
             }
         }
+
+        return inferredCallLabels;
     }
 
-    private record CallContext(MethodInsnNode methodCall, Frame<SourceValue> frame, MethodNode contextMethodNode, ClassNode contextClassNode) {
+    private static boolean canInferClassForNameOne(Frame<SourceValue> frame) {
+        Optional<String> className = stringAnalyzer.inferConstant(getCallArg(frame, 0));
+        return className.isPresent();
+    }
 
+    private static boolean canInferClassForNameTwo(Frame<SourceValue> frame) {
+        Optional<String> className = stringAnalyzer.inferConstant(getCallArg(frame, 0));
+        Optional<Boolean> initialize = booleanAnalyzer.inferConstant(getCallArg(frame, 1));
+        return className.isPresent() && initialize.isPresent();
     }
 
     private static SourceValue getCallArg(Frame<SourceValue> frame, int argIdx) {
@@ -98,76 +118,11 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         return frame.getStack(stackPos);
     }
 
-    private static void partiallyEvaluateClassForNameOne(CallContext cc) {
-        Optional<String> className = stringAnalyzer.inferConstant(getCallArg(cc.frame, 0));
-        if (className.isEmpty()) {
-            return;
-        }
-
-        MethodNode partiallyEvaluatedMethod = generatePEMethodNode(cc.methodCall, "()Ljava/lang/Class;");
-
-        partiallyEvaluatedMethod.instructions.add(new LdcInsnNode(className.get()));
-        partiallyEvaluatedMethod.instructions.add(new MethodInsnNode(cc.methodCall.getOpcode(), cc.methodCall.owner, cc.methodCall.name, cc.methodCall.desc));
-        partiallyEvaluatedMethod.instructions.add(new InsnNode(Opcodes.ARETURN));
-        partiallyEvaluatedMethod.maxStack = 1;
-        partiallyEvaluatedMethod.maxLocals = 0;
-
-        redirectCall(cc.methodCall, partiallyEvaluatedMethod, cc.contextClassNode);
-    }
-
-    private static void partiallyEvaluateClassForNameTwo(CallContext cc) {
-        Optional<String> className = stringAnalyzer.inferConstant(getCallArg(cc.frame, 0));
-        Optional<Boolean> initialize = booleanAnalyzer.inferConstant(getCallArg(cc.frame, 1));
-        if (className.isEmpty() || initialize.isEmpty()) {
-            return;
-        }
-
-        MethodNode partiallyEvaluatedMethod = generatePEMethodNode(cc.methodCall, "(Ljava/lang/ClassLoader;)Ljava/lang/Class;");
-
-        partiallyEvaluatedMethod.instructions.add(new LdcInsnNode(className.get()));
-        partiallyEvaluatedMethod.instructions.add(new InsnNode(initialize.get() ? Opcodes.ICONST_1 : Opcodes.ICONST_0));
-        partiallyEvaluatedMethod.instructions.add(new VarInsnNode(Opcodes.ALOAD, 0));
-        partiallyEvaluatedMethod.instructions.add(new MethodInsnNode(cc.methodCall.getOpcode(), cc.methodCall.owner, cc.methodCall.name, cc.methodCall.desc));
-        partiallyEvaluatedMethod.instructions.add(new InsnNode(Opcodes.ARETURN));
-        partiallyEvaluatedMethod.maxStack = 3;
-        partiallyEvaluatedMethod.maxLocals = 1;
-
-        redirectCall(cc.methodCall, partiallyEvaluatedMethod, cc.contextClassNode);
-    }
-
-    private static MethodNode generatePEMethodNode(MethodInsnNode methodCall, String newDesc) {
-        int currentCount = partialEvaluationCounts.getOrDefault(methodCall.name, 0);
-        String newName = "$" + methodCall.name + currentCount;
-        partialEvaluationCounts.put(methodCall.name, currentCount + 1);
-        return new MethodNode(Opcodes.ACC_PRIVATE + Opcodes.ACC_STATIC + Opcodes.ACC_SYNTHETIC, newName, newDesc, null, null);
-    }
-
-    private static void redirectCall(MethodInsnNode methodCall, MethodNode target, ClassNode contextClassNode) {
-        contextClassNode.methods.add(target);
-
-        int originalParameterCount = Type.getArgumentTypes(methodCall.desc).length + (methodCall.getOpcode() != Opcodes.INVOKESTATIC ? 1 : 0);
-        int newParameterCount = Type.getArgumentTypes(target.desc).length;
-        int argsToRemove = originalParameterCount - newParameterCount;
-
-        if (argsToRemove == originalParameterCount) {
-            target.instructions.insertBefore(methodCall, new InsnNode(Opcodes.POP));
-        } else {
-            for (int i = 0; i < argsToRemove; i++) {
-                target.instructions.insertBefore(methodCall, new InsnNode(Opcodes.SWAP));
-                target.instructions.insertBefore(methodCall, new InsnNode(Opcodes.POP));
-            }
-        }
-
-        methodCall.owner = contextClassNode.name;
-        methodCall.name = target.name;
-        methodCall.desc = target.desc;
-    }
-
     private static String encodeMethodCall(MethodInsnNode methodCall) {
         return encodeMethodCall(methodCall.owner, methodCall.name, methodCall.desc);
     }
 
     private static String encodeMethodCall(String owner, String name, String desc) {
-        return owner + "." + name + ":" + desc;
+        return owner + ":" + name + ":" + desc;
     }
 }
