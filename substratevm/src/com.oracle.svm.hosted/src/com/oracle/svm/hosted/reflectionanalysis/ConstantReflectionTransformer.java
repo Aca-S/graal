@@ -59,8 +59,7 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
             }
         }
 
-        // Return the original bytes - the only transformation we're doing is inserting tracking labels in order to calculate BCIs
-        return classFileBuffer;
+        return writer.toByteArray();
     }
 
     private static Map<MethodNode, List<InferredCall>> analyzeClass(ClassNode classNode) {
