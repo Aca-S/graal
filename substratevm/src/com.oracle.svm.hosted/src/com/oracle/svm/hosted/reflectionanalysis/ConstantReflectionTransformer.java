@@ -1,8 +1,10 @@
 package com.oracle.svm.hosted.reflectionanalysis;
 
+import com.oracle.svm.hosted.reflectionanalysis.analyzers.ConstantArrayAnalyzer;
 import com.oracle.svm.hosted.reflectionanalysis.analyzers.ConstantBooleanAnalyzer;
 import com.oracle.svm.hosted.reflectionanalysis.analyzers.ConstantClassAnalyzer;
 import com.oracle.svm.hosted.reflectionanalysis.analyzers.ConstantStringAnalyzer;
+import com.oracle.svm.hosted.reflectionanalysis.analyzers.ControlFlowGraphAnalyzer;
 import jdk.internal.org.objectweb.asm.ClassReader;
 import jdk.internal.org.objectweb.asm.ClassWriter;
 import jdk.internal.org.objectweb.asm.tree.AbstractInsnNode;
@@ -43,6 +45,7 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
     private static ConstantStringAnalyzer stringAnalyzer;
     private static ConstantBooleanAnalyzer booleanAnalyzer;
     private static ConstantClassAnalyzer classAnalyzer;
+    private static ConstantArrayAnalyzer<Class<?>> classArrayAnalyzer;
 
     @Override
     public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classFileBuffer) {
@@ -78,7 +81,7 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
     }
 
     private static List<InferredCall> analyzeMethod(MethodNode methodNode, ClassNode contextClassNode, ClassLoader loader) {
-        Analyzer<SourceValue> analyzer = new Analyzer<>(new SourceInterpreter());
+        Analyzer<SourceValue> analyzer = new ControlFlowGraphAnalyzer<>(new SourceInterpreter());
         try {
             analyzer.analyze(contextClassNode.name, methodNode);
         } catch (AnalyzerException e) {
@@ -86,11 +89,16 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         }
 
         AbstractInsnNode[] instructions = methodNode.instructions.toArray();
-        Frame<SourceValue>[] frames = analyzer.getFrames();
+
+        @SuppressWarnings("unchecked")
+        ControlFlowGraphNode<SourceValue>[] frames = Arrays.stream(analyzer.getFrames())
+                .map(frame -> (ControlFlowGraphNode<SourceValue>) frame)
+                .toArray(ControlFlowGraphNode[]::new);
 
         stringAnalyzer = new ConstantStringAnalyzer(instructions, frames);
         booleanAnalyzer = new ConstantBooleanAnalyzer(instructions, frames);
         classAnalyzer = new ConstantClassAnalyzer(instructions, frames, loader);
+        classArrayAnalyzer = new ConstantArrayAnalyzer<>(instructions, frames, classAnalyzer);
 
         List<InferredCall> inferredCalls = new ArrayList<>();
 
