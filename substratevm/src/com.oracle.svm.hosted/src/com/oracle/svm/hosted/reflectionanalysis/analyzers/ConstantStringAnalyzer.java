@@ -21,4 +21,3 @@ public class ConstantStringAnalyzer extends ConstantValueAnalyzer<String> {
         }
     }
 }
-
