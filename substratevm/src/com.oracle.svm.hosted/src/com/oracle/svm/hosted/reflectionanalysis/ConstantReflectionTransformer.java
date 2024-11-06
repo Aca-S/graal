@@ -26,19 +26,23 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
+import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
 public class ConstantReflectionTransformer implements ClassFileTransformer {
 
     public static ConstantReflectionRegistry callRegistry = new ConstantReflectionRegistry();
 
-    public static final Map<String, Function<Frame<SourceValue>, List<Object>>> reflectiveCallHandlers = new HashMap<>() {
+    public static final Map<String, BiFunction<Frame<SourceValue>, AbstractInsnNode, List<Object>>> reflectiveCallHandlers = new HashMap<>() {
         {
             put(Utils.encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;"), ConstantReflectionTransformer::canInferClassForNameOne);
             put(Utils.encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;"), ConstantReflectionTransformer::canInferClassForNameTwo);
             put(Utils.encodeMethodCall("java/lang/Class", "getField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;"), ConstantReflectionTransformer::canInferField);
             put(Utils.encodeMethodCall("java/lang/Class", "getDeclaredField", "(Ljava/lang/String;)Ljava/lang/reflect/Field;"), ConstantReflectionTransformer::canInferField);
+            put(Utils.encodeMethodCall("java/lang/Class", "getMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;"), ConstantReflectionTransformer::canInferMethod);
+            put(Utils.encodeMethodCall("java/lang/Class", "getDeclaredMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;"), ConstantReflectionTransformer::canInferMethod);
+            put(Utils.encodeMethodCall("java/lang/Class", "getConstructor", "([Ljava/lang/Class;)Ljava/lang/reflect/Constructor;"), ConstantReflectionTransformer::canInferConstructor);
+            put(Utils.encodeMethodCall("java/lang/Class", "getDeclaredConstructor", "([Ljava/lang/Class;)Ljava/lang/reflect/Constructor;"), ConstantReflectionTransformer::canInferConstructor);
         }
     };
 
@@ -104,11 +108,11 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
 
         for (int i = 0; i < instructions.length; i++) {
             if (instructions[i] instanceof MethodInsnNode methodCall) {
-                Function<Frame<SourceValue>, List<Object>> handler = reflectiveCallHandlers.get(Utils.encodeMethodCall(methodCall));
+                BiFunction<Frame<SourceValue>, AbstractInsnNode, List<Object>> handler = reflectiveCallHandlers.get(Utils.encodeMethodCall(methodCall));
                 if (handler == null) {
                     continue;
                 }
-                List<Object> callArguments = handler.apply(frames[i]);
+                List<Object> callArguments = handler.apply(frames[i], instructions[i]);
                 if (callArguments == null) {
                     continue;
                 }
@@ -121,21 +125,34 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         return inferredCalls;
     }
 
-    private static List<Object> canInferClassForNameOne(Frame<SourceValue> frame) {
+    private static List<Object> canInferClassForNameOne(Frame<SourceValue> frame, AbstractInsnNode callSite) {
         Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
         return inferArguments(className);
     }
 
-    private static List<Object> canInferClassForNameTwo(Frame<SourceValue> frame) {
+    private static List<Object> canInferClassForNameTwo(Frame<SourceValue> frame, AbstractInsnNode callSite) {
         Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
         Optional<Boolean> initialize = booleanAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
         return inferArguments(className, initialize);
     }
 
-    private static List<Object> canInferField(Frame<SourceValue> frame) {
+    private static List<Object> canInferField(Frame<SourceValue> frame, AbstractInsnNode callSite) {
         Optional<Class<?>> clazz = classAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
         Optional<String> fieldName = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
         return inferArguments(clazz, fieldName);
+    }
+
+    private static List<Object> canInferMethod(Frame<SourceValue> frame, AbstractInsnNode callSite) {
+        Optional<Class<?>> clazz = classAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
+        Optional<String> methodName = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
+        Optional<ArrayList<Class<?>>> parameterTypes = classArrayAnalyzer.inferConstant(Utils.getCallArg(frame, 2), callSite);
+        return inferArguments(clazz, methodName, parameterTypes);
+    }
+
+    private static List<Object> canInferConstructor(Frame<SourceValue> frame, AbstractInsnNode callSite) {
+        Optional<Class<?>> clazz = classAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
+        Optional<ArrayList<Class<?>>> parameterTypes = classArrayAnalyzer.inferConstant(Utils.getCallArg(frame, 1), callSite);
+        return inferArguments(clazz, parameterTypes);
     }
 
     @SuppressWarnings("OptionalGetWithoutIsPresent")
