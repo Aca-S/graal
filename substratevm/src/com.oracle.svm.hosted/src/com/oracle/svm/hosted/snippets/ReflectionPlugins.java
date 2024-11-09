@@ -424,6 +424,44 @@ public final class ReflectionPlugins {
         return true;
     }
 
+    private boolean processAnalyzerClassForName(GraphBuilderContext b, ResolvedJavaMethod targetMethod, ValueNode nameNode, ValueNode initializeNode) {
+        List<Object> arguments = ConstantReflectionTransformer.callRegistry.get(b.getMethod(), b.bci());
+        if (arguments == null) {
+            return false;
+        }
+
+        String className = (String) arguments.getFirst();
+        boolean initialize = arguments.size() == 2 ? (Boolean) arguments.get(1) : false;
+
+        /*
+         * Check which variant of Class.forName was called in order to avoid logging
+         * the initialize argument value for the single parameter version of the call.
+         */
+        Object[] argValues = targetMethod.getParameters().length == 1
+                ? new Object[] {className}
+                : new Object[] {className, initialize};
+
+        TypeResult<Class<?>> typeResult = imageClassLoader.findClass(className, false);
+        if (!typeResult.isPresent()) {
+            Throwable e = typeResult.getException();
+            return throwException(b, targetMethod, null, argValues, e.getClass(), e.getMessage());
+        }
+        Class<?> clazz = typeResult.get();
+        if (PredefinedClassesSupport.isPredefined(clazz)) {
+            return false;
+        }
+
+        JavaConstant classConstant = pushConstant(b, targetMethod, null, argValues, JavaKind.Object, clazz, false);
+        if (classConstant == null) {
+            return false;
+        }
+
+        if (initialize) {
+            classInitializationPlugin.apply(b, b.getMetaAccess().lookupJavaType(clazz), () -> null);
+        }
+        return true;
+    }
+
     /**
      * For {@link PredefinedClassesSupport predefined classes}, the class loader is not known yet at
      * image build time. So we must not constant fold Class.getClassLoader for such classes. But for

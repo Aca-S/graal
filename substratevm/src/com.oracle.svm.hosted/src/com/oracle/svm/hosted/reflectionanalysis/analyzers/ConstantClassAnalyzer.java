@@ -9,6 +9,8 @@ import jdk.internal.org.objectweb.asm.tree.MethodInsnNode;
 import jdk.internal.org.objectweb.asm.tree.analysis.Frame;
 import jdk.internal.org.objectweb.asm.tree.analysis.SourceValue;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 import static jdk.internal.org.objectweb.asm.Opcodes.GETSTATIC;
@@ -22,6 +24,8 @@ public class ConstantClassAnalyzer extends ConstantValueAnalyzer<Class<?>> {
 
     private final static String FOR_NAME_SIGNATURE = Utils.encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;");
     private final static String FOR_NAME_WITH_INIT_SIGNATURE = Utils.encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;");
+
+    private static final Map<String, Class<?>> classCache = new HashMap<>();
 
     public ConstantClassAnalyzer(AbstractInsnNode[] instructions, Frame<SourceValue>[] frames, ClassLoader classLoader) {
         super(instructions, frames);
@@ -80,8 +84,16 @@ public class ConstantClassAnalyzer extends ConstantValueAnalyzer<Class<?>> {
     }
 
     private Optional<Class<?>> inferClassLoad(String className) {
+        if (classCache.containsKey(className)) {
+            Class<?> clazz = classCache.get(className);
+            return clazz == null ? Optional.empty() : Optional.of(clazz);
+        }
+
         try {
+            // A hack to avoid infinite recursion.
+            classCache.put(className, null);
             Class<?> clazz = classLoader.loadClass(className);
+            classCache.put(className, clazz);
             return Optional.of(clazz);
         } catch (ClassNotFoundException e) {
             return Optional.empty();

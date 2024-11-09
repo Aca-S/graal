@@ -26,8 +26,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -35,7 +33,7 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
 
     public static ConstantReflectionRegistry callRegistry = new ConstantReflectionRegistry();
 
-    public static final Map<String, BiFunction<Frame<SourceValue>, AbstractInsnNode, List<Object>>> reflectiveCallHandlers = new HashMap<>() {
+    private static final Map<String, BiFunction<AnalyzerSuite, CallContext, List<Object>>> reflectiveCallHandlers = new HashMap<>() {
         {
             put(Utils.encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;)Ljava/lang/Class;"), ConstantReflectionTransformer::canInferClassForNameOne);
             put(Utils.encodeMethodCall("java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;"), ConstantReflectionTransformer::canInferClassForNameTwo);
@@ -48,22 +46,8 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         }
     };
 
-    private static ConstantStringAnalyzer stringAnalyzer;
-    private static ConstantBooleanAnalyzer booleanAnalyzer;
-    private static ConstantClassAnalyzer classAnalyzer;
-    private static ConstantArrayAnalyzer<Class<?>> classArrayAnalyzer;
-
-    private static final Set<String> analyzedClasses = ConcurrentHashMap.newKeySet();
-
     @Override
     public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classFileBuffer) {
-        // Avoid infinite recursion by storing the already analyzed classes.
-        if (analyzedClasses.contains(className)) {
-            return classFileBuffer;
-        } else {
-            analyzedClasses.add(className);
-        }
-
         ClassNode classNode = new ClassNode();
 
         ClassReader reader = new ClassReader(classFileBuffer);
@@ -110,20 +94,22 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
                 .map(frame -> (ControlFlowGraphNode<SourceValue>) frame)
                 .toArray(ControlFlowGraphNode[]::new);
 
-        stringAnalyzer = new ConstantStringAnalyzer(instructions, frames);
-        booleanAnalyzer = new ConstantBooleanAnalyzer(instructions, frames);
-        classAnalyzer = new ConstantClassAnalyzer(instructions, frames, loader);
-        classArrayAnalyzer = new ConstantArrayAnalyzer<>(instructions, frames, classAnalyzer);
+        AnalyzerSuite analyzerSuite = new AnalyzerSuite(
+                new ConstantStringAnalyzer(instructions, frames),
+                new ConstantBooleanAnalyzer(instructions, frames),
+                new ConstantClassAnalyzer(instructions, frames, loader),
+                new ConstantArrayAnalyzer<>(instructions, frames, new ConstantClassAnalyzer(instructions, frames, loader))
+        );
 
         List<InferredCall> inferredCalls = new ArrayList<>();
 
         for (int i = 0; i < instructions.length; i++) {
             if (instructions[i] instanceof MethodInsnNode methodCall) {
-                BiFunction<Frame<SourceValue>, AbstractInsnNode, List<Object>> handler = reflectiveCallHandlers.get(Utils.encodeMethodCall(methodCall));
+                BiFunction<AnalyzerSuite, CallContext, List<Object>> handler = reflectiveCallHandlers.get(Utils.encodeMethodCall(methodCall));
                 if (handler == null) {
                     continue;
                 }
-                List<Object> callArguments = handler.apply(frames[i], instructions[i]);
+                List<Object> callArguments = handler.apply(analyzerSuite, new CallContext(frames[i], instructions[i]));
                 if (callArguments == null) {
                     continue;
                 }
@@ -136,33 +122,33 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
         return inferredCalls;
     }
 
-    private static List<Object> canInferClassForNameOne(Frame<SourceValue> frame, AbstractInsnNode callSite) {
-        Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
+    private static List<Object> canInferClassForNameOne(AnalyzerSuite analyzerSuite, CallContext callContext) {
+        Optional<String> className = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
         return inferArguments(className);
     }
 
-    private static List<Object> canInferClassForNameTwo(Frame<SourceValue> frame, AbstractInsnNode callSite) {
-        Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
-        Optional<Boolean> initialize = booleanAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
+    private static List<Object> canInferClassForNameTwo(AnalyzerSuite analyzerSuite, CallContext callContext) {
+        Optional<String> className = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
+        Optional<Boolean> initialize = analyzerSuite.booleanAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1));
         return inferArguments(className, initialize);
     }
 
-    private static List<Object> canInferField(Frame<SourceValue> frame, AbstractInsnNode callSite) {
-        Optional<Class<?>> clazz = classAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
-        Optional<String> fieldName = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
+    private static List<Object> canInferField(AnalyzerSuite analyzerSuite, CallContext callContext) {
+        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
+        Optional<String> fieldName = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1));
         return inferArguments(clazz, fieldName);
     }
 
-    private static List<Object> canInferMethod(Frame<SourceValue> frame, AbstractInsnNode callSite) {
-        Optional<Class<?>> clazz = classAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
-        Optional<String> methodName = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
-        Optional<ArrayList<Class<?>>> parameterTypes = classArrayAnalyzer.inferConstant(Utils.getCallArg(frame, 2), callSite);
+    private static List<Object> canInferMethod(AnalyzerSuite analyzerSuite, CallContext callContext) {
+        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
+        Optional<String> methodName = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1));
+        Optional<ArrayList<Class<?>>> parameterTypes = analyzerSuite.classArrayAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 2), callContext.callSite);
         return inferArguments(clazz, methodName, parameterTypes);
     }
 
-    private static List<Object> canInferConstructor(Frame<SourceValue> frame, AbstractInsnNode callSite) {
-        Optional<Class<?>> clazz = classAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
-        Optional<ArrayList<Class<?>>> parameterTypes = classArrayAnalyzer.inferConstant(Utils.getCallArg(frame, 1), callSite);
+    private static List<Object> canInferConstructor(AnalyzerSuite analyzerSuite, CallContext callContext) {
+        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
+        Optional<ArrayList<Class<?>>> parameterTypes = analyzerSuite.classArrayAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1), callContext.callSite);
         return inferArguments(clazz, parameterTypes);
     }
 
@@ -175,6 +161,15 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
     }
 
     private record InferredCall(LabelNode label, List<Object> arguments) {
+
+    }
+
+    private record AnalyzerSuite(ConstantStringAnalyzer stringAnalyzer, ConstantBooleanAnalyzer booleanAnalyzer,
+                                 ConstantClassAnalyzer classAnalyzer, ConstantArrayAnalyzer<Class<?>> classArrayAnalyzer) {
+
+    }
+
+    private record CallContext(Frame<SourceValue> frame, AbstractInsnNode callSite) {
 
     }
 }
