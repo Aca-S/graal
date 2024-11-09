@@ -26,6 +26,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -51,8 +53,17 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
     private static ConstantClassAnalyzer classAnalyzer;
     private static ConstantArrayAnalyzer<Class<?>> classArrayAnalyzer;
 
+    private static final Set<String> analyzedClasses = ConcurrentHashMap.newKeySet();
+
     @Override
     public byte[] transform(ClassLoader loader, String className, Class<?> classBeingRedefined, ProtectionDomain protectionDomain, byte[] classFileBuffer) {
+        // Avoid infinite recursion by storing the already analyzed classes.
+        if (analyzedClasses.contains(className)) {
+            return classFileBuffer;
+        } else {
+            analyzedClasses.add(className);
+        }
+
         ClassNode classNode = new ClassNode();
 
         ClassReader reader = new ClassReader(classFileBuffer);
@@ -60,7 +71,7 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
 
         Map<MethodNode, List<InferredCall>> inferredCalls = analyzeClass(classNode, loader);
 
-        // Force label BCI resolution
+        // Force label BCI resolution.
         ClassWriter writer = new ClassWriter(0);
         classNode.accept(writer);
 

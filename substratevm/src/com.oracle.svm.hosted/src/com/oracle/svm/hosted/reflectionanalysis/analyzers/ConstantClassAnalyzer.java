@@ -81,7 +81,7 @@ public class ConstantClassAnalyzer extends ConstantValueAnalyzer<Class<?>> {
 
     private Optional<Class<?>> inferClassLoad(String className) {
         try {
-            Class<?> clazz = Class.forName(className, false, classLoader);
+            Class<?> clazz = classLoader.loadClass(className);
             return Optional.of(clazz);
         } catch (ClassNotFoundException e) {
             return Optional.empty();
