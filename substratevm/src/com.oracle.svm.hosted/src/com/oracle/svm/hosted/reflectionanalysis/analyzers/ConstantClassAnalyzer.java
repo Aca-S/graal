@@ -53,9 +53,9 @@ public class ConstantClassAnalyzer extends ConstantValueAnalyzer<Class<?>> {
             case INVOKESTATIC -> {
                 MethodInsnNode methodCall = (MethodInsnNode) sourceInstruction;
                 if (Utils.encodeMethodCall(methodCall).equals(FOR_NAME_SIGNATURE)) {
-                    yield forNameHandler(sourceInstructionFrame);
+                    yield forNameHandler(methodCall, sourceInstructionFrame);
                 } else if (Utils.encodeMethodCall(methodCall).equals(FOR_NAME_WITH_INIT_SIGNATURE)) {
-                    yield forNameWithInitHandler(sourceInstructionFrame);
+                    yield forNameWithInitHandler(methodCall, sourceInstructionFrame);
                 } else {
                     yield Optional.empty();
                 }
@@ -84,30 +84,31 @@ public class ConstantClassAnalyzer extends ConstantValueAnalyzer<Class<?>> {
     }
 
     private Optional<Class<?>> inferClassLoad(String className) {
-        if (classCache.containsKey(className)) {
-            Class<?> clazz = classCache.get(className);
-            return clazz == null ? Optional.empty() : Optional.of(clazz);
-        }
-
-        try {
-            // A hack to avoid infinite recursion.
-            classCache.put(className, null);
-            Class<?> clazz = classLoader.loadClass(className);
-            classCache.put(className, clazz);
-            return Optional.of(clazz);
-        } catch (ClassNotFoundException e) {
-            return Optional.empty();
-        }
+//        if (classCache.containsKey(className)) {
+//            Class<?> clazz = classCache.get(className);
+//            return clazz == null ? Optional.empty() : Optional.of(clazz);
+//        }
+//
+//        try {
+//            // A hack to avoid infinite recursion.
+//            classCache.put(className, null);
+//            Class<?> clazz = classLoader.loadClass(className);
+//            classCache.put(className, clazz);
+//            return Optional.of(clazz);
+//        } catch (ClassNotFoundException e) {
+//            return Optional.empty();
+//        }
+        return Optional.of(Object.class);
     }
 
-    private Optional<Class<?>> forNameHandler(Frame<SourceValue> frame) {
-        Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
+    private Optional<Class<?>> forNameHandler(MethodInsnNode methodCall, Frame<SourceValue> frame) {
+        Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(methodCall, 0, frame));
         return className.flatMap(this::inferClassLoad);
     }
 
-    private Optional<Class<?>> forNameWithInitHandler(Frame<SourceValue> frame) {
-        Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(frame, 0));
-        Optional<Boolean> initialize = booleanAnalyzer.inferConstant(Utils.getCallArg(frame, 1));
+    private Optional<Class<?>> forNameWithInitHandler(MethodInsnNode methodCall, Frame<SourceValue> frame) {
+        Optional<String> className = stringAnalyzer.inferConstant(Utils.getCallArg(methodCall, 0, frame));
+        Optional<Boolean> initialize = booleanAnalyzer.inferConstant(Utils.getCallArg(methodCall, 1, frame));
 
         if (className.isEmpty() || initialize.isEmpty()) {
             return Optional.empty();

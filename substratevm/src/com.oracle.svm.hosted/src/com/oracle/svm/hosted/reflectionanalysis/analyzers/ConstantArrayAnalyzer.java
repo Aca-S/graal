@@ -194,7 +194,7 @@ public class ConstantArrayAnalyzer<T> {
 
         int numOfArgs = Type.getArgumentTypes(methodCall.desc).length;
         return IntStream.range(0, numOfArgs)
-                .anyMatch(i -> loadedValueTracesToStore(Utils.getCallArg(frame, i), originalStoreInstruction));
+                .anyMatch(i -> loadedValueTracesToStore(Utils.getCallArg(methodCall, i, frame), originalStoreInstruction));
     }
 
     private boolean loadedValueTracesToStore(SourceValue value, AbstractInsnNode originalStoreInstruction) {

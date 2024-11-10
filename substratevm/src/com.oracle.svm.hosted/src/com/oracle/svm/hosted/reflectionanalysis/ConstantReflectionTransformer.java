@@ -109,7 +109,7 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
                 if (handler == null) {
                     continue;
                 }
-                List<Object> callArguments = handler.apply(analyzerSuite, new CallContext(frames[i], instructions[i]));
+                List<Object> callArguments = handler.apply(analyzerSuite, new CallContext(frames[i], methodCall));
                 if (callArguments == null) {
                     continue;
                 }
@@ -123,32 +123,32 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
     }
 
     private static List<Object> canInferClassForNameOne(AnalyzerSuite analyzerSuite, CallContext callContext) {
-        Optional<String> className = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
+        Optional<String> className = analyzerSuite.stringAnalyzer.inferConstant(getCallArg(callContext, 0));
         return inferArguments(className);
     }
 
     private static List<Object> canInferClassForNameTwo(AnalyzerSuite analyzerSuite, CallContext callContext) {
-        Optional<String> className = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
-        Optional<Boolean> initialize = analyzerSuite.booleanAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1));
+        Optional<String> className = analyzerSuite.stringAnalyzer.inferConstant(getCallArg(callContext, 0));
+        Optional<Boolean> initialize = analyzerSuite.booleanAnalyzer.inferConstant(getCallArg(callContext, 1));
         return inferArguments(className, initialize);
     }
 
     private static List<Object> canInferField(AnalyzerSuite analyzerSuite, CallContext callContext) {
-        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
-        Optional<String> fieldName = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1));
+        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(getCallArg(callContext, 0));
+        Optional<String> fieldName = analyzerSuite.stringAnalyzer.inferConstant(getCallArg(callContext, 1));
         return inferArguments(clazz, fieldName);
     }
 
     private static List<Object> canInferMethod(AnalyzerSuite analyzerSuite, CallContext callContext) {
-        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
-        Optional<String> methodName = analyzerSuite.stringAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1));
-        Optional<ArrayList<Class<?>>> parameterTypes = analyzerSuite.classArrayAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 2), callContext.callSite);
+        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(getCallArg(callContext, 0));
+        Optional<String> methodName = analyzerSuite.stringAnalyzer.inferConstant(getCallArg(callContext, 1));
+        Optional<ArrayList<Class<?>>> parameterTypes = analyzerSuite.classArrayAnalyzer.inferConstant(getCallArg(callContext, 2), callContext.callSite);
         return inferArguments(clazz, methodName, parameterTypes);
     }
 
     private static List<Object> canInferConstructor(AnalyzerSuite analyzerSuite, CallContext callContext) {
-        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 0));
-        Optional<ArrayList<Class<?>>> parameterTypes = analyzerSuite.classArrayAnalyzer.inferConstant(Utils.getCallArg(callContext.frame, 1), callContext.callSite);
+        Optional<Class<?>> clazz = analyzerSuite.classAnalyzer.inferConstant(getCallArg(callContext, 0));
+        Optional<ArrayList<Class<?>>> parameterTypes = analyzerSuite.classArrayAnalyzer.inferConstant(getCallArg(callContext, 1), callContext.callSite);
         return inferArguments(clazz, parameterTypes);
     }
 
@@ -169,7 +169,11 @@ public class ConstantReflectionTransformer implements ClassFileTransformer {
 
     }
 
-    private record CallContext(Frame<SourceValue> frame, AbstractInsnNode callSite) {
+    private record CallContext(Frame<SourceValue> frame, MethodInsnNode callSite) {
 
+    }
+
+    private static SourceValue getCallArg(CallContext callContext, int argumentIndex) {
+        return Utils.getCallArg(callContext.callSite, argumentIndex, callContext.frame);
     }
 }

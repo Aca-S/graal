@@ -55,6 +55,7 @@ import java.util.stream.Stream;
 
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.reflect.proxy.DynamicProxySupport;
 import com.oracle.svm.core.util.UserError;
 import com.oracle.svm.hosted.reflectionanalysis.ConstantReflectionTransformer;
 import jdk.graal.compiler.util.json.JsonBuilder;
@@ -324,6 +325,7 @@ public final class ReflectionPlugins {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, ValueNode nameNode) {
                 return processClassForName(b, targetMethod, nameNode, ConstantNode.forBoolean(true));
+                //return processAnalyzerClassForName(b, targetMethod);
             }
         });
         r.register(new RequiredInvocationPlugin("forName", String.class, boolean.class, ClassLoader.class) {
@@ -336,6 +338,7 @@ public final class ReflectionPlugins {
                  * application class loader.
                  */
                 return processClassForName(b, targetMethod, nameNode, initializeNode);
+                //return processAnalyzerClassForName(b, targetMethod);
             }
         });
         r.register(new RequiredInvocationPlugin("getClassLoader", Receiver.class) {
@@ -388,11 +391,10 @@ public final class ReflectionPlugins {
             return false;
         }
 
-        if (ConstantReflectionTransformer.callRegistry.get(b.getMethod(), b.bci()) == null) {
+        if (!analysisGuard(b)) {
             return false;
         }
 
-        // TODO: Replace with arguments gathered in the ConstantReflectionTransformer call registry
         String className = (String) classNameValue;
         boolean initialize = (Boolean) initializeValue;
         /*
@@ -424,7 +426,11 @@ public final class ReflectionPlugins {
         return true;
     }
 
-    private boolean processAnalyzerClassForName(GraphBuilderContext b, ResolvedJavaMethod targetMethod, ValueNode nameNode, ValueNode initializeNode) {
+    private boolean processAnalyzerClassForName(GraphBuilderContext b, ResolvedJavaMethod targetMethod) {
+        if (b.getMethod() == null) {
+            return false;
+        }
+
         List<Object> arguments = ConstantReflectionTransformer.callRegistry.get(b.getMethod(), b.bci());
         if (arguments == null) {
             return false;
@@ -573,6 +579,11 @@ public final class ReflectionPlugins {
         }
 
         if (!allowConstantFolding.test(argValues)) {
+            return false;
+        }
+
+        List<String> reflectionAnalysisTargets = Arrays.asList("getField", "getDeclaredField", "getMethod", "getDeclaredMethod", "getConstructor", "getDeclaredConstructor");
+        if (reflectionAnalysisTargets.contains(targetMethod.getName()) && !analysisGuard(b)) {
             return false;
         }
 
@@ -826,6 +837,23 @@ public final class ReflectionPlugins {
         if (ReflectionPluginsTracingFeature.isEnabled()) {
             ReflectionPluginsTracingFeature.traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
         }
+    }
+
+    private static boolean analysisGuard(GraphBuilderContext b) {
+        ResolvedJavaMethod method = b.getMethod();
+        String declaringClassName = method.getDeclaringClass().toJavaName();
+
+        String proxyClassPattern = DynamicProxySupport.PROXY_CLASS_NAME_PATTERN.pattern();
+        if (declaringClassName.matches(proxyClassPattern)) {
+            return true;
+        }
+
+        List<String> whitelist = Arrays.asList("java", "javax", "jdk", "sun", "com.sun", "com.oracle");
+        if (whitelist.stream().anyMatch(declaringClassName::startsWith)) {
+            return true;
+        }
+
+        return ConstantReflectionTransformer.callRegistry.get(method, b.bci()) != null;
     }
 }
 
