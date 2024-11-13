@@ -79,6 +79,9 @@ import jdk.vm.ci.meta.JavaKind;
 import jdk.vm.ci.meta.JavaType;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Used by a {@link GraphBuilderPlugin} to interface with an object that parses the bytecode of a
  * single {@linkplain #getMethod() method} as part of building a {@linkplain #getGraph() graph} .
@@ -276,6 +279,14 @@ public interface GraphBuilderContext extends GraphBuilderTool {
             parent = parent.getParent();
         }
         return result;
+    }
+
+    default List<ResolvedJavaMethod> getInliningChain() {
+        List<ResolvedJavaMethod> chain = new ArrayList<>();
+        for (GraphBuilderContext cur = this; cur != null; cur = cur.getParent()) {
+            chain.add(cur.getMethod());
+        }
+        return chain;
     }
 
     /**

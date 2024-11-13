@@ -391,9 +391,9 @@ public final class ReflectionPlugins {
             return false;
         }
 
-        if (!analysisGuard(b)) {
-            return false;
-        }
+//        if (!analysisGuard(b)) {
+//            return false;
+//        }
 
         String className = (String) classNameValue;
         boolean initialize = (Boolean) initializeValue;
@@ -582,10 +582,10 @@ public final class ReflectionPlugins {
             return false;
         }
 
-        List<String> reflectionAnalysisTargets = Arrays.asList("getField", "getDeclaredField", "getMethod", "getDeclaredMethod", "getConstructor", "getDeclaredConstructor");
-        if (reflectionAnalysisTargets.contains(targetMethod.getName()) && !analysisGuard(b)) {
-            return false;
-        }
+//        List<String> reflectionAnalysisTargets = Arrays.asList("getField", "getDeclaredField", "getMethod", "getDeclaredMethod", "getConstructor", "getDeclaredConstructor");
+//        if (reflectionAnalysisTargets.contains(targetMethod.getName()) && !analysisGuard(b)) {
+//            return false;
+//        }
 
         Object returnValue;
         try {
@@ -921,15 +921,13 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
     private abstract static class TraceEntry {
 
-        protected ResolvedJavaMethod contextMethod;
-        protected int inliningDepth;
+        protected List<ResolvedJavaMethod> inliningChain;
         protected ResolvedJavaMethod targetMethod;
         protected Object targetCaller;
         protected Object[] targetArguments;
 
         TraceEntry(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments) {
-            this.contextMethod = context.getMethod();
-            this.inliningDepth = context.getDepth();
+            this.inliningChain = context.getInliningChain();
             this.targetMethod = targetMethod;
             this.targetCaller = targetCaller;
             this.targetArguments = targetArguments;
@@ -940,14 +938,17 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
                     .map(arg -> arg instanceof Object[] ? Arrays.toString((Object[]) arg) : Objects.toString(arg)).collect(Collectors.joining(", "));
 
             return "Call to " + targetMethod.format("%H.%n(%p)") +
-                    " reached in " + contextMethod.format("%H.%n(%p)") +
+                    " reached in " + inliningChain.getFirst().format("%H.%n(%p)") +
                     (targetCaller != null ? " with caller " + targetCaller + " and" : "") +
                     " with arguments (" + targetArgumentsString + ") was reduced";
         }
 
         public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
-            builder.append("contextMethod", contextMethod.format("%H.%n(%p)"));
-            builder.append("inliningDepth", inliningDepth);
+            try (JsonBuilder.ArrayBuilder inliningBuilder = builder.append("inliningChain").array()) {
+                for (ResolvedJavaMethod m : inliningChain) {
+                    inliningBuilder.append(m.format("%H.%n(%p)"));
+                }
+            }
             builder.append("targetMethod", targetMethod.format("%H.%n(%p)"));
             if (targetCaller != null) {
                 builder.append("targetCaller", targetCaller);
