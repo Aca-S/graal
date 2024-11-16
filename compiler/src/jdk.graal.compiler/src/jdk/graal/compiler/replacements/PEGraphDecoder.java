@@ -413,12 +413,12 @@ public abstract class PEGraphDecoder extends SimplifyingGraphDecoder {
         }
 
         @Override
-        public List<ResolvedJavaMethod> getInliningChain() {
-            List<ResolvedJavaMethod> chain = new ArrayList<>();
-            for (PEMethodScope cur = isParsingInvocationPlugin() ? methodScope.caller : methodScope; cur != null; cur = cur.caller) {
-                chain.add(cur.method);
+        public List<StackTraceElement> getCallStack() {
+            List<StackTraceElement> callStack = new ArrayList<>(Arrays.asList(methodScope.getCallStack()));
+            if (isParsingInvocationPlugin()) {
+                callStack.removeFirst();
             }
-            return chain;
+            return callStack;
         }
 
         @Override

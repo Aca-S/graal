@@ -921,13 +921,13 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
 
     private abstract static class TraceEntry {
 
-        protected List<ResolvedJavaMethod> inliningChain;
+        protected List<StackTraceElement> callStack;
         protected ResolvedJavaMethod targetMethod;
         protected Object targetCaller;
         protected Object[] targetArguments;
 
         TraceEntry(GraphBuilderContext context, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments) {
-            this.inliningChain = context.getInliningChain();
+            this.callStack = context.getCallStack();
             this.targetMethod = targetMethod;
             this.targetCaller = targetCaller;
             this.targetArguments = targetArguments;
@@ -938,15 +938,15 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
                     .map(arg -> arg instanceof Object[] ? Arrays.toString((Object[]) arg) : Objects.toString(arg)).collect(Collectors.joining(", "));
 
             return "Call to " + targetMethod.format("%H.%n(%p)") +
-                    " reached in " + inliningChain.getFirst().format("%H.%n(%p)") +
+                    " reached in " + callStack.getFirst() +
                     (targetCaller != null ? " with caller " + targetCaller + " and" : "") +
                     " with arguments (" + targetArgumentsString + ") was reduced";
         }
 
         public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
-            try (JsonBuilder.ArrayBuilder inliningBuilder = builder.append("inliningChain").array()) {
-                for (ResolvedJavaMethod m : inliningChain) {
-                    inliningBuilder.append(m.format("%H.%n(%p)"));
+            try (JsonBuilder.ArrayBuilder callStackBuilder = builder.append("inlinedCallStack").array()) {
+                for (StackTraceElement element : callStack) {
+                    callStackBuilder.append(element);
                 }
             }
             builder.append("targetMethod", targetMethod.format("%H.%n(%p)"));

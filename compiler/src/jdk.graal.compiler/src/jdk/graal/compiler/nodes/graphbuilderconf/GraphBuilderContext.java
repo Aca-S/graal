@@ -281,12 +281,12 @@ public interface GraphBuilderContext extends GraphBuilderTool {
         return result;
     }
 
-    default List<ResolvedJavaMethod> getInliningChain() {
-        List<ResolvedJavaMethod> chain = new ArrayList<>();
+    default List<StackTraceElement> getCallStack() {
+        List<StackTraceElement> callStack = new ArrayList<>();
         for (GraphBuilderContext cur = this; cur != null; cur = cur.getParent()) {
-            chain.add(cur.getMethod());
+            callStack.add(cur.getMethod().asStackTraceElement(cur.bci()));
         }
-        return chain;
+        return callStack;
     }
 
     /**

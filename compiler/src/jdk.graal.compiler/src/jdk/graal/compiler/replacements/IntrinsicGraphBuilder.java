@@ -329,7 +329,7 @@ public class IntrinsicGraphBuilder extends CoreProvidersDelegate implements Grap
     }
 
     @Override
-    public List<ResolvedJavaMethod> getInliningChain() {
+    public List<StackTraceElement> getCallStack() {
         return new ArrayList<>();
     }
 
