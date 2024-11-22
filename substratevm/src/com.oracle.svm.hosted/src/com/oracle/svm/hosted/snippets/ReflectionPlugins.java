@@ -47,7 +47,9 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
@@ -618,13 +620,13 @@ public final class ReflectionPlugins {
             @Override
             public boolean apply(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver) {
                 VMError.guarantee(!targetMethod.isStatic(), "Bulk reflection queries are not static");
-                return registerConstantBulkReflectionQuery(b, receiver, registrationCallback);
+                return registerConstantBulkReflectionQuery(b, targetMethod, receiver, registrationCallback);
             }
         });
     }
 
     @SuppressWarnings("unchecked")
-    private <T> boolean registerConstantBulkReflectionQuery(GraphBuilderContext b, Receiver receiver, Consumer<T> registrationCallback) {
+    private <T> boolean registerConstantBulkReflectionQuery(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Receiver receiver, Consumer<T> registrationCallback) {
         /*
          * Calling receiver.get(true) can add a null check guard, i.e., modifying the graph in the
          * process. It is an error for invocation plugins that do not replace the call to modify the
@@ -636,6 +638,7 @@ public final class ReflectionPlugins {
         }
 
         b.add(ReachabilityRegistrationNode.create(() -> registerForRuntimeReflection((T) receiverValue, registrationCallback), reason));
+        //traceConstant(b, targetMethod, receiverValue, new Object[0], new Object[0]);
         return true;
     }
 
@@ -804,13 +807,13 @@ public final class ReflectionPlugins {
             intrinsicConstant = b.getSnippetReflection().forObject(intrinsicValue);
         }
 
-        b.addPush(returnKind, ConstantNode.forConstant(intrinsicConstant, b.getMetaAccess()));
         traceConstant(b, targetMethod, targetCaller, targetArguments, intrinsicValue);
+        b.addPush(returnKind, ConstantNode.forConstant(intrinsicConstant, b.getMetaAccess()));
         return intrinsicConstant;
     }
 
     private boolean throwException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass, String originalMessage) {
-        /* Get the exception throwing method that has a message parameter. */
+        /* Get the exception throwing method that has a mesReflectionPlsage parameter. */
         Method exceptionMethod = ExceptionSynthesizer.throwExceptionMethodOrNull(exceptionClass, String.class);
         if (exceptionMethod == null) {
             return false;
@@ -820,22 +823,24 @@ public final class ReflectionPlugins {
             return false;
         }
 
+        traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
         String message = originalMessage + ". This exception was synthesized during native image building from a call to " + targetMethod.format("%H.%n(%p)") +
                         " with constant arguments.";
         ExceptionSynthesizer.throwException(b, exceptionMethod, message);
-        traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
         return true;
     }
 
-    private static void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
-        if (ReflectionPluginsTracingFeature.isEnabled()) {
-            ReflectionPluginsTracingFeature.traceConstant(b, targetMethod, targetCaller, targetArguments, value);
+    private void traceConstant(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Object value) {
+        if (ReflectionPluginsTracingFeature.isEnabled() && reason.duringAnalysis() && reason != ParsingReason.JITCompilation) {
+            b.add(ReachabilityRegistrationNode.create(() -> ReflectionPluginsTracingFeature.traceConstant(b, targetMethod, targetCaller, targetArguments, value), reason));
+            //ReflectionPluginsTracingFeature.traceConstant(b, targetMethod, targetCaller, targetArguments, value);
         }
     }
 
-    private static void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
-        if (ReflectionPluginsTracingFeature.isEnabled()) {
-            ReflectionPluginsTracingFeature.traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
+    private void traceException(GraphBuilderContext b, ResolvedJavaMethod targetMethod, Object targetCaller, Object[] targetArguments, Class<? extends Throwable> exceptionClass) {
+        if (ReflectionPluginsTracingFeature.isEnabled() && reason.duringAnalysis() && reason != ParsingReason.JITCompilation) {
+            b.add(ReachabilityRegistrationNode.create(() -> ReflectionPluginsTracingFeature.traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass), reason));
+            //ReflectionPluginsTracingFeature.traceException(b, targetMethod, targetCaller, targetArguments, exceptionClass);
         }
     }
 
@@ -875,7 +880,7 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
         });
     }
 
-    private static final List<TraceEntry> log = new ArrayList<>();
+    private static final Queue<TraceEntry> log = new ConcurrentLinkedDeque<>();
     private static ReflectionPluginLogSupport logger = null;
 
     @Override
@@ -944,9 +949,9 @@ final class ReflectionPluginsTracingFeature implements InternalFeature {
         }
 
         public void toJson(JsonBuilder.ObjectBuilder builder) throws IOException {
-            try (JsonBuilder.ArrayBuilder callStackBuilder = builder.append("inlinedCallStack").array()) {
+            try (JsonBuilder.ArrayBuilder foldContextBuilder = builder.append("foldContext").array()) {
                 for (StackTraceElement element : callStack) {
-                    callStackBuilder.append(element);
+                    foldContextBuilder.append(element);
                 }
             }
             builder.append("targetMethod", targetMethod.format("%H.%n(%p)"));
